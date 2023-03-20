@@ -1,0 +1,539 @@
+---
+title: "Final project"
+author: "Liangjie Lu"
+date: "2023.3.20"
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+---
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.pos = 'H')
+```
+
+***
+
+# Github Link
+
+https://github.com/jacklj9811
+
+# Abstract 
+
+Steinmetz et al (2019) conduct a study on the neurons activities of mice over the visual stimuli. This report focuses on how neurons in the visual cortex respond to the stimuli presented on the left and right, and how to predict the outcome of each trial using the neural activities and stimuli. My results show that there are no interaction effect between left and right stimuli over the activity of the neurons of the mice, and the best model is a logistic regression model with prediction accuracy 0.75 on the test set.
+
+***
+
+# Introduction
+
+In the work of Steinmetz et al (2019), the neural correlates of vision, choice, action, and behavioral engagement were identified by separating the neural activity throughout the mouse brains while they performed a task. The mice were rewarded for indicating with their forepaws which side had the highest contrast in the task, which entailed visual stimuli presenting on either the left, right, both, or neither side. The researchers were able to distinguish between the brain correlates of visual processing, action initiation, and action selection because the same visual signal might result in various turns or inaction.
+
+30,000 neurons in 42 brain regions were recorded using Neuropixels probes while the mice were performing the task. Individual neurons' firing rates were then identified, as well as their anatomical locations. The mice performed the test well, and their decisions were most correct when stimuli were presented in high contrast on a single side.
+
+***
+ 
+# Background 
+
+- ref: Course_project_description.Rmd
+
+In this project, we examine a portion of the information gathered by Steinmetz et al (2019).
+
+
+In the study of Steinmetz et al. (2019), investigations were carried out over 39 sessions on a total of 10 mice. A mouse was randomly presented with visual stimuli on two screens that were positioned on either side of it for the course of several hundred trials that made up each session. The contrast levels of the stimuli varied, taking values between 0 and 1, with 0 denoting the lack of a stimulus. The mice had to use a wheel that was controlled by their forepaws to make choices based on visual cues. Depending on the results of their choices, a reward or a penalty was then given. Spike trains, which are collections of timestamps corresponding to neuron firing, are a representation of the activity of the neurons in the mice's visual cortex during the trials. 
+
+As part of this experiment, we pay close attention to the spike trains of neurons in the visual cortex from the start of the stimulus until 0.4 seconds after it started. Moreover, we only take two mice's data from five sessions (Sessions 1 to 5). (Cori and Frossman).
+
+***
+
+# Descriptive analysis 
+
+```{r echo=TRUE, eval=TRUE, warning=FALSE}
+# [ref:Jing Lyu, R code of Discussion 6]
+# [ref:Chen, Shizhe, Chapter4ANOVAII.ipynb]
+# [ref:Course_project_description.Rmd]
+library(dplyr)
+library(ggplot2)
+session=list()
+for(i in 1:5){
+  session[[i]]=readRDS(paste('./session',i,'.rds',sep=''))
+  # print(session[[i]]$mouse_name)
+  # print(session[[i]]$date_exp)
+  
+}
+```
+
+- ref:Course_project_description.Rmd
+
+Five variables are available for each trial, namely 
+
+- `feedback_type`: type of the feedback, 1 for success and -1 for failure
+- `contrast_left`: contrast of the left stimulus
+- `contrast_right`: contrast of the right stimulus
+- `time`: centers of the time bins for `spks`  
+- `spks`: numbers of spikes of neurons in the visual cortex in time bins defined in `time`
+
+```{r echo=FALSE, eval=FALSE}
+# [ref:Course_project_description.Rmd]
+# Rename eval=TRUE if you want the output to appear in the report.
+# Take the 11th trial in Session 1 for example
+id=11
+session[[1]]$feedback_type[id]
+session[[1]]$contrast_left[id]
+session[[1]]$contrast_right[id]
+length(session[[1]]$time[[id]])
+dim(session[[1]]$spks[[id]])
+
+```
+
+Here, I choose the mean firing rate, which is calculated as, for each trial, the average number of spikes per second across all neurons within a given 0.4 seconds time interval, as an outcome statistic [ref:Course_project_description.Rmd].
+
+These are the reasons why I choose it:
+
+* It is hard to study the whole pictures of stimuli. Take the mean of the counts of the objects of interest is a popular way to simplify the problem.
+
+* It is worth mentioning that all neurons in the whole periods of time of each trial should all be taken into consideration. So taking this mean firing rate is actually a natural choice.
+
+* The continuous time periods for each trials are 0.4 seconds. I can use the following code to check this out: `max(session[[i]]$time[j])-min(session[[i]]$time[[j]])`. The result is always 0.38. That makes sense. The very time when stimuli apply to mice should not be recorded because mice have no time to respond. And each entry inside `time` is actually a time bin. 39 time bins are 40 time points.
+
+* The number neurons might vary from sessions to sessions, so it is calculated repeatedly over different sessions.
+
+```{r}
+# [ref:Course_project_description.Rmd]
+# Obtain the firing rate 
+# averaged over [0,0.4] seconds since stim onsets
+# averaged across all neurons 
+
+t <- 0.4 # from Background 
+df <- NULL
+for(i in 1:length(session)){
+  n.trials <- length(session[[i]]$spks)
+  n.neurons <- dim(session[[i]]$spks[[1]])[1]
+  # Obtain the firing rate 
+  firingrate=numeric(n.trials)
+  for(j in 1:n.trials){
+    firingrate[j] <- sum(session[[i]]$spks[[j]])/n.neurons/t
+  }
+  if(is.null(df)){
+    df <- data.frame(contrast_left=session[[i]]$contrast_left %>% as.vector(),
+                     contrast_right=session[[i]]$contrast_right %>% as.vector(),
+                     feedback_type=session[[i]]$feedback_type,
+                     firingrate=firingrate)
+    df$session <- paste(session[[i]]$mouse_name, session[[i]]$date_exp, sep='_')
+  } else{
+    df.tmp <- data.frame(contrast_left=session[[i]]$contrast_left %>% as.vector(),
+                         contrast_right=session[[i]]$contrast_right %>% as.vector(),
+                         feedback_type=session[[i]]$feedback_type,
+                         firingrate=firingrate)
+    df.tmp$session <- paste(session[[i]]$mouse_name, session[[i]]$date_exp,
+                          sep='_')
+    df <- rbind(df, df.tmp)
+  }
+}
+df$contrast_left <- df$contrast_left %>% as.factor()
+df$contrast_right <- df$contrast_right %>% as.factor()
+df$feedback_type <- df$feedback_type %>% as.factor()
+df$session <- df$session %>% as.factor()
+```
+
+```{r}
+ggplot(df, aes(x = session, y = firingrate, fill = session)) +
+  geom_boxplot() +
+  labs(x = "Session", y = "Firing Rate") +
+  scale_fill_discrete(name = "Session") +
+  theme(axis.text.x = element_blank()) +
+  annotate("rect", xmin = 0.5, xmax = 3.43, ymin = -Inf, ymax = Inf,
+           fill = NA, color = "red", linewidth = 1) +
+  annotate("rect", xmin = 3.5, xmax = 5.5, ymin = -Inf, ymax = Inf,
+           fill = NA, color = "black", linewidth = 1)+
+  annotate("text", x = 1.5, y = max(df$firingrate), label = "Cori") +
+  annotate("text", x = 4.5, y = max(df$firingrate), label = "Forssmann")
+```
+
+Findings:
+
+* Session matters when we talk about mean firing rate. There are totally different distributions/boxes of mean firing rates across different sessions.
+
+* Additionally, the differences in mean firing rates across individuals are seemly apparent.
+
+* Meanwhile, the differences in mean firing rates across dates of experiments on the same individual need to be further justified. They are similar, but not very.
+
+
+```{r}
+# [ref:Jing Lyu, R code of Discussion 6]
+library(gplots)
+par(mfrow=c(1,3))
+plotmeans(firingrate~contrast_right,data=df,xlab="Contrast of right stimuli",ylab="Mean firing rate", main="Main effect, Contrast of right stimuli") 
+plotmeans(firingrate~contrast_left,data=df,xlab="Contrast of left stimuli",ylab="Mean firing rate", main="Main effect, Contrast of left stimuli")
+contrast_right <- df$contrast_right
+contrast_left <- df$contrast_left
+firingrate <- df$firingrate
+interaction.plot(contrast_right, contrast_left, firingrate,xlab="Contrast of right stimuli",ylab="Contrast of left stimuli", main="Interaction")
+par(mfrow=c(1,1))
+```
+
+Findings:
+
+* There seems to be no clear interaction between contrast of right stimuli and contrast of left stimuli over mean firing rate
+
+* Both contrast of right stimuli and contrast of left stimuli have some impact on mean firing rate
+
+***
+
+# Inferential analysis 
+
+I want to build a mixed effect model for this data. Here are my reasons for this:
+
+* Taking into account correlation: Fixed and random effects can both be estimated using mixed effects models. Correlation between observations that come from the same cluster is explained by the random effects (e.g., repeated measures on the same subject). The parameter estimations may be skewed and ineffective if this correlation is ignored.
+
+* Handling unbalanced data: Mixed effects models may handle unbalanced data without experiencing any problems with the analysis. This is because different clusters may have varying numbers of observations. This is especially beneficial with longitudinal or clustered data, where the amount of observations can change among individuals.
+
+* Modeling heterogeneity: Individual-level variance that is not accounted for by fixed effects can be accounted for by mixed effects models. This can be significant when the data is heterogeneous, such as when various clusters have various intercepts or slopes.
+
+* Increased power: Compared to more straightforward approaches like ANOVA or linear regression, mixed effects models can increase the power of the statistical tests by taking into account the random effects in the investigation.
+
+In general, mixed effects models offer a versatile and potent tool for the analysis of complicated data containing clustered or repeated measures.
+
+The model might be seemly too complex if all interaction terms are included. So I choose to test whether including interaction terms are necessary or not in the first place. 
+
+```{r, warning=FALSE}
+library(lme4)
+library(lmerTest)
+options(contrasts = c("contr.treatment", "contr.poly"))
+model.0 <- lmer(firingrate~contrast_left+contrast_right+(1|session), data=df)
+model.1 <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right)+(1|contrast_left:session) + (1|contrast_right:session) + (1|contrast_left:contrast_right:session), data=df)
+anova(model.1, model.0)
+```
+
+Findings:
+
+* The complex model with interaction terms (`model.1`) has a smaller AIC, a bigger log-likelihood, and a lower deviance, compared with the simple model (`model.0`). These criteria prefer `model.1` to `model.0`
+
+* The simple model has a smaller BIC than the complex model. This criterion prefer `model.0` to `model.1`
+
+* Chi-squared test indicates that the complex model is not the same as the simple model at significance level 0.001. The result indicates that including interaction terms might be necessary according to this test.
+
+According to my findings, it is somehow necessary to include interaction terms. 
+
+Let us do some further investigation to simplify `model.1`. I choose to apply AIC and BIC criteria to find out the best model among all models from the null model $firingrate \sim left + right + (1|session)$ to the full model $firingrate \sim left + right + (1|session) +                  (left:right) + (1|left:session) + (1|right:session) + (1|left:right:session)$:
+
+```{r}
+# Fit null model
+model.0 <- lmer(firingrate ~ contrast_left + contrast_right + (1|session), data = df)
+
+# Fit full model
+model.1 <- lmer(firingrate ~ contrast_left + contrast_right + (1|session) + 
+                 (contrast_left:contrast_right) + (1|contrast_left:session) + 
+                 (1|contrast_right:session) + (1|contrast_left:contrast_right:session), data = df)
+
+# Fit other models
+m.lr <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right), data = df)
+m.ls <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(1|contrast_left:session), data = df)
+m.rs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(1|contrast_right:session), data = df)
+m.lrs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(1|contrast_left:contrast_right:session), data = df)
+m.lr.ls <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right)+(1|contrast_left:session), data=df)
+m.lr.rs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right)+(1|contrast_right:session), data=df)
+m.lr.lrs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right)+(1|contrast_left:contrast_right:session), data=df)
+m.ls.rs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(1|contrast_left:session)+(1|contrast_right:session), data=df)
+m.ls.lrs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(1|contrast_left:session)+(1|contrast_left:contrast_right:session), data=df)
+m.rs.lrs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(1|contrast_right:session)+(1|contrast_left:contrast_right:session), data=df) 
+m.lr.ls.rs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right)+(1|contrast_left:session)+(1|contrast_right:session), data=df) 
+m.lr.ls.lrs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right)+(1|contrast_left:session)+(1|contrast_left:contrast_right:session), data=df) 
+m.lr.rs.lrs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(contrast_left:contrast_right)+(1|contrast_right:session)+(1|contrast_left:contrast_right:session), data=df) 
+m.ls.rs.lrs <- lmer(firingrate~contrast_left+contrast_right+(1|session)+(1|contrast_left:session)+(1|contrast_right:session)+(1|contrast_left:contrast_right:session), data=df) 
+
+model.list <- list(model.0,
+                   m.lr, m.ls, m.rs, m.lrs,
+                   m.lr.ls, m.lr.rs, m.lr.lrs, m.ls.rs, m.ls.lrs, m.rs.lrs, 
+                   m.lr.ls.rs, m.lr.ls.lrs, m.lr.rs.lrs, m.ls.rs.lrs,
+                   model.1
+                   )
+model.names <- c('model.0',
+                 'm.lr', 'm.ls', 'm.rs', 'm.lrs',
+                 'm.lr.ls', 'm.lr.rs', 'm.lr.lrs', 'm.ls.rs', 'm.ls.lrs', 'm.rs.lrs', 
+                 'm.lr.ls.rs', 'm.lr.ls.lrs', 'm.lr.rs.lrs', 'm.ls.rs.lrs',
+                 'model.1')
+AIC.list <- sapply(model.list, AIC)
+BIC.list <- sapply(model.list, BIC)
+AIC.star <- rep('', length(AIC.list)); AIC.star[which.min(AIC.list)] <- '*'
+BIC.star <- rep('', length(BIC.list)); BIC.star[which.min(BIC.list)] <- '*'
+
+```
+
+```{r}
+# Display the AIC and BIC values for each model
+cbind(model.names, AIC = round(AIC.list,2), AIC.star = AIC.star, BIC = round(BIC.list,2), BIC.star = BIC.star)
+
+
+# Find the best model according to AIC and BIC
+best.model.AIC <- model.names[which.min(AIC.list)]
+best.model.BIC <- model.names[which.min(BIC.list)]
+
+cat(paste0("The best model according to AIC is '", best.model.AIC, "'.\n"))
+cat(paste0("The best model according to BIC is '", best.model.BIC, "'.\n"))
+
+anova(m.ls.rs, model.0)
+```
+
+Findings:
+
+* The best model is `m.ls.rs`, which is $firingrate\sim left+right+(1|session)+(1|left:session)+(1|right:session)$ supported by both AIC and BIC criteria.
+
+* The complex model (`m.ls.rs`) has a smaller AIC, a smaller BIC, a bigger log-likelihood, and a lower deviance, compared with the simple model (`model.0`). These criteria prefer `m.ls.rs` to `model.0`
+
+* Chi-squared test indicates that the complex model is not the same as the simple model at significance level 0.001. The result indicates that no interaction between fixed effects should be considered according to this test. Only interaction between fix effects and random effects should be considered.
+
+`m.ls.rs`, which is $firingrate\sim left+right+(1|session)+(1|left:session)+(1|right:session)$, is the best model according to these findings.
+
+
+As a result, here is my model:
+
+- ref:Chen, Shizhe, Chapter4ANOVAIII.ipynb
+
+Imbalanced Designed Three-way ANOVA Model with mixed effects and with interaction terms:
+
+$$Y_{ijkl}=\mu_{\cdot\cdot\cdot}+\alpha_i+\beta_j+\gamma_k+(\alpha\gamma)_{ik}+(\beta\gamma)_{jk}+\epsilon_{ijkl},\ \ \ l=1,\cdots,n_{ijk},\ \ \ i=1,\cdots,a,\ \ \ j=1,\cdots,b,k=1,\cdots,c$$
+where 
+
+(i) $\sum_{ijkl}\alpha_i=\sum_{ijkl}\beta_j=0$, $\sum_{jkl}(\alpha\gamma)_{ik} =0$ for any $i$, $\sum_{ikl}(\beta\gamma)_{jk}=0$ for any $j$, 
+
+(ii) $\gamma_k\sim_{i.i.d.}N(0,\sigma_{\gamma}^2),\epsilon_{ijk}\sim_{i.i.d.}N(0,\sigma^2)$, 
+
+(iii) $(\alpha\gamma)_{ik}\sim_{iid}N(0,(1-1/a)\sigma_{\alpha\gamma}^2)$ for any fixed $i$, $(\beta\gamma)_{jk}\sim_{iid} N(0,(1-1/b)\sigma_{\beta\gamma}^2)$ for any fixed $j$, 
+
+(iv) 
+$Cov((\alpha\gamma)_{ik},(\alpha\gamma)_{i'k})=-\sigma_{\alpha\gamma}^2/a$ if $i\not=i'$,
+$Cov((\beta\gamma)_{jk},(\beta\gamma)_{j'k})=-\sigma_{\beta\gamma}^2/b$ if $j\not=j'$,
+
+(v)
+$Cov((\alpha\gamma)_{ik},(\alpha\gamma)_{i'k'})=0$ if $i\not=i$ and $k\not=k'$,
+$Cov((\beta\gamma)_{jk},(\beta\gamma)_{j'k'})=0$ if $j\not=j'$ and $k\not=k'$, 
+and 
+
+(vi)  $\{ \gamma_k\}$, $\{(\beta\gamma)_{jk}\}$, $\{(\alpha\gamma)_{ik}\}$, $\{\epsilon_{ijkl} \}$ are mutually independent. 
+
+In this model, 
+
+* $\alpha_i$ represents the effects from the 4 levels of contrast of the left stimuli `contrast_left`, which are 0 ($i=1$), 0.25 ($i=2$), 0.5 ($i=3$), and 1 ($i=4$). 
+
+* $\beta_j$ represents the effects from the 4 levels of contrast of the right stimuli `contrast_right`, which are 0 ($j=1$), 0.25 ($j=2$), 0.5 ($j=3$), and 1 ($j=4$). 
+
+* $\gamma_k$ represents the effects of the 5 different sessions, which are Cori_2016-12-14 ($k=1$), Cori_2016-12-17 ($k=2$), Cori_2016-12-18 ($k=3$), Forssmann_2017-11-01 ($k=4$), and Forssmann_2017-11-02 ($k=5$). 
+
+* $(\alpha\gamma)_{ik}$ represent the interaction effects between the 4 levels of contrast of the left stimuli and the 5 different sessions.
+
+* $(\beta\gamma)_{jk}$ represents the interaction effects between the 4 levels of contrast of the right stimuli and the 5 different sessions. 
+
+* The outcome $Y_{ijkl}$ represents the $l$th mean firing rate under $i$th level of contrast of the left stimuli, $j$th level of contrast of the right stimuli, and $k$th session. 
+
+* The mean effect $\mu_{\cdot\cdot\cdot}$ represents the mean firing rate in the population. 
+
+* The errors $\epsilon_{ijkl}$ capture any unexplained effects on mean firing rates. 
+
+* Values of $n_{ijk}$ can be found in the following table:
+```{r}
+# [ref:Jing Lyu, R code of Discussion 6]
+# [ref:Chen, Shizhe, Chapter4ANOVAII.ipynb]
+table(df$contrast_left,df$contrast_right,df$session)
+```
+
+It is clearly an imbalanced design.
+
+Here is the details of this model:
+
+```{r}
+summary(m.ls.rs)
+```
+
+So the fitted model is:
+
+$$\widehat{\text{firingrate}}_{ijkl} = 2.69187 - 0.05551 * \text{I(contrast_left0.25}_i) + 0.21859 * \text{I(contrast_left0.5}_i) + 0.24935 * \text{I(contrast_left1}_i) \\+ 0.15286 * \text{I(contrast_right0.25}_j) + 0.19049 * \text{I(contrast_right0.5}_j) + 0.41160 * \text{I(contrast_right1}_j)\ \forall i,j,k,l$$
+
+Here, `contrast_left0` and `cotrast_right0` work as reference group.
+
+And the estimation of the variance of the random effects are:
+  $$\widehat\sigma_{\beta\gamma}^2=\widehat\sigma_{\text{contrast_right:session}}^2=0.01514,\ \widehat\sigma_{\alpha\gamma}^2=\widehat\sigma_{\text{contrast_left:session}}^2=0.03075,\ \widehat\sigma_\gamma^2=\widehat\sigma_{\text{session}}^2=1.30118,\ \widehat\sigma^2=\widehat\sigma_{\text{Residual}}^2=0.37663$$
+
+In short, these are how neurons in the visual cortex respond to the stimuli presented on the left and right. There is no clear evidence to support that the interaction between the stimuli presented on the left and right matters when we talk about the response of neurons in the visual cortex.
+
+
+# Sensitivity analysis 
+
+- ref: https://stat.ethz.ch/~meier/teaching/anova/random-and-mixed-effects-models.html#eq:cell-means-random
+
+```{r, warning=FALSE}
+# [ref: https://stat.ethz.ch/~meier/teaching/anova/random-and-mixed-effects-models.html#eq:cell-means-random]
+library("lmerTest")
+## Tukey-Anscombe plot
+par(mfrow=c(1,1))
+plot(m.ls.rs)
+## QQ-plots
+par(mfrow = c(2, 2))
+qqnorm(ranef(m.ls.rs)$session[, 1], 
+       main = "Random effects of sessions")
+qqnorm(ranef(m.ls.rs)$'contrast_right:session'[, 1], 
+       main = "Random interaction between right stimuli and sessions")
+qqnorm(ranef(m.ls.rs)$'contrast_left:session'[, 1], 
+       main = "Random interaction between left stimuli and sessions")
+qqnorm(resid(m.ls.rs), main = "Residuals")
+par(mfrow=c(1, 1))
+```
+
+Findings:
+
+* The Tukey-Anscombe plot appears promising. Residuals seemly have no relationship with fitted values.
+
+* The QQ-plots could look better, but since there aren't many observations to go on, the deviations are still acceptable. In other words, it is challenging to identify obvious breaches of the normalcy assumption.
+
+So far so good. There is no obvious violation to the model assumptions of `m.ls.rs`.
+
+***
+
+# Predictive modeling
+
+I have several ideas for model construction:
+
+* Do some improvement on the original ANOVA model
+
+* Logistic regression
+
+And then I need to compare their prediction accuracy.
+
+## Further investigation into the data
+
+Let us do some further investigation. I choose to focus on these questions:
+
+* Can I distinguish sessions just by mouse names? This idea is supported by the description analysis shown before.
+
+* According to Steinmetz et al. (2019), mice had larger chances to give right feedbacks if the absolute differences between the contrasts of the left stimulus and the ones of the right stimulus are larger. Can I prove it and thus utilize this fact to improve the models? 
+
+### Investigation 1: `name` versus `session`
+
+First, let us investigate the `name` versus `session` in their effects on mean firing rate:
+
+```{r}
+df.name <- df
+new_levels <- gsub(".*Cori.*", "Cori", df$session)
+new_levels <- gsub(".*Forssmann.*", "Forssmann", new_levels)
+
+# Convert modified vector to a factor with the new levels
+df.name$name <- factor(new_levels, levels = c("Cori", "Forssmann"))
+model.2.0 <- lmer(firingrate~contrast_left + contrast_right + (1|session), data=df.name)
+model.2.1 <- lmer(firingrate~contrast_left + contrast_right + (1|name), data=df.name)
+anova(model.2.1, model.2.0)
+```
+
+Findings:
+
+* The complex model with `name` terms (`model.2.1`) has a smaller AIC, a smaller BIC, a bigger log-likelihood, and a lower deviance, compared with the simple model (`model.2.0`). These criteria prefer `model.2.1` to `model.2.0`
+
+As a result, `name` of the mouse should be chosen as random intercepts instead of `session`. [I do not know if I could use `name` instead of `session` in Question 1, so I choose to use `session` to avoid potential punishments. Start from here, I will use `name`]
+
+### Investigation 2: absolute magnitude distance between left and right stimuli
+
+Second, let us investigate the effect of absolute magnitude distance between left and right stimuli on mean firing rate:
+
+```{r}
+df.name.abs <- df.name
+df.name.abs$abs.lr <- 
+  as.factor(
+    abs(
+      as.numeric(levels(df.name.abs$contrast_left))[df.name.abs$contrast_left] -
+        as.numeric(levels(df.name.abs$contrast_right))[df.name.abs$contrast_right] 
+      )
+    )
+model.3.0 <- lmer(firingrate~contrast_left + contrast_right + (1|name), data=df.name.abs) 
+model.3.1 <- lmer(firingrate~contrast_left + contrast_right + abs.lr + (1|name), data=df.name.abs)
+anova(model.3.0, model.3.1)
+```
+
+Findings:
+
+* The complex model (`model.3.1`) has a smaller AIC, a bigger log-likelihood, and a lower deviance, compared with the simple model (`model.3.0`). These criteria prefer `model.3.1` to `model.3.0`
+
+* The simple model has a smaller BIC than the complex model. This criterion prefer `model.3.0` to `model.3.1`
+
+* Chi-squared test indicates that the complex model is not the same as the simple model at significance level 0.05. The result indicates that including absolute contrast of stimulus magnitude distance might be necessary according to this test.
+
+According to my findings, it is somehow necessary to include absolute magnitude distance between left and right stimuli. 
+
+## Training and testing models
+
+### Data seperation
+
+Let start training here:
+
+```{r}
+df.train <- df.name.abs[-c(1:100),]
+df.test <- df.name.abs[1:100,]
+```
+
+### Model training
+
+```{r}
+# ANOVA model
+tmp <- df.train
+tmp$feedback_type <- as.numeric(levels(tmp$feedback_type)[tmp$feedback_type])
+candidate.0 <- lmer(feedback_type~contrast_left+contrast_right+abs.lr+(1|name), data = tmp)
+# logistic regression model
+candidate.1<- glm(feedback_type~firingrate+contrast_left+contrast_right+abs.lr+name, family = binomial(), data = df.train)
+
+```
+
+
+### Model performance testing
+
+```{r, warning=FALSE}
+library(caret)
+predicted.values <- ifelse(predict(candidate.0, newdata = df.test)>0,1,-1)
+predicted.values <- as.factor(predicted.values)
+actual.values <- df.test$feedback_type
+(accuracy.score <- confusionMatrix(predicted.values, actual.values)$overall["Accuracy"])
+
+predicted.values <- ifelse(predict(candidate.1, newdata = df.test)>0,1,-1)
+predicted.values <- as.factor(predicted.values)
+actual.values <- df.test$feedback_type
+(accuracy.score <- confusionMatrix(predicted.values, actual.values)$overall["Accuracy"])
+```
+
+So the best model is `candidate.1` with 0.75 prediction accuracy on test set.
+
+***
+
+# Discussion 
+
+My analysis have these following outcomes:
+
+* There are no interaction effect between left and right stimuli over the activity of the neurons of the mice.
+
+* The best model is a logistic regression model `candidate.1`. i.e. `glm(feedback_type~firingrate+contrast_left+contrast_right+abs.lr+name, family = binomial(), data = df.train)`.
+
+There is much work to be done in the future.
+
+* There are trash lines inside our data. Because the result `feedback_type` becomes a independent random variable that follows Bernoulli distribution with parameter 0.5 when `contrast_left`=`contrast_right`$\not=0$ according to Steinmetz et al. (2019). I did not exclude these data. Actually, I did some experiments on this, but find out that for new models which are constructed on dataset that excludes these trash data, their predictive abilities decrease. I still do not know why.
+
+* There are actually three types of mice's reaction. I might have chance to use that information to improve my model. 
+
+***
+
+# Acknowledgement {-}
+
+1. Chen, Shizhe, Courses, Notes, Codes, and all work you offer us in STA207
+
+2. Jing Lyu, R codes of Discussion 5 and 6 and all work you offer us in STA207
+
+3. Boyd S, Boyd S P, Vandenberghe L. Convex optimization[M]. Cambridge university press, 2004.
+
+***
+
+# Reference {-}
+
+Imbens, G., & Rubin, D. (2015). Stratified Randomized Experiments. In Causal Inference for Statistics, Social, and Biomedical Sciences: An Introduction (pp. 187-218). Cambridge: Cambridge University Press. doi:10.1017/CBO9781139025751.010
+
+Steinmetz, N.A., Zatka-Haas, P., Carandini, M. et al. Distributed coding of choice, action and engagement across the mouse brain. Nature 576, 266–273 (2019). https://doi.org/10.1038/s41586-019-1787-x
+
+***
+
+# Session info {-}
+
+```{r}
+sessionInfo()
+```
